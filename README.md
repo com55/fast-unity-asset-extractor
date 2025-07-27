@@ -27,7 +27,7 @@ pip install UnityPy==1.23.0 rich
 
 ### 1. GUI Mode (Graphical User Interface)
 
-Run the script without any command-line arguments to launch the GUI:
+Double click `assest_extracter.py` or Run the script without any command-line arguments to launch the GUI:
 
 ```bash
 python assest_extracter.py
