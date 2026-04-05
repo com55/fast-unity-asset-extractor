@@ -72,9 +72,7 @@ if exist "%VENV_PYTHON%" (
         set "VF=venv|%VENV_PYTHON%|!VENV_VERSION!|%REQ_HASH%"
         call :is_cache_hit "venv" "!VF!" CACHE_HIT
         if "!CACHE_HIT!"=="1" (
-            echo [run] Cache hit: using existing .venv
-            call :run_python "%VENV_PYTHON%"
-            exit /b !errorlevel!
+            echo [run] Cache hit for existing .venv, verifying requirements
         )
 
         echo [run] Checking requirements in existing .venv
@@ -108,9 +106,7 @@ if defined PY_EXE (
         set "PF=python|%PY_EXE%|!PY_VERSION!|%REQ_HASH%"
         call :is_cache_hit "python" "!PF!" CACHE_HIT
         if "!CACHE_HIT!"=="1" (
-            echo [run] Cache hit: using system python
-            call :run_python "%PY_EXE%"
-            exit /b !errorlevel!
+            echo [run] Cache hit for system python, verifying requirements
         )
 
         echo [run] Checking installed requirements on system python !PY_VERSION!
@@ -138,7 +134,7 @@ if defined PY_EXE (
     if defined UV_EXE (
         rem 3.1) uv exists -> use uv to create venv with preferred python version.
         echo [run] uv is available, creating .venv using uv python %PREFERRED_UV_PYTHON%
-        call :ensure_venv_from_uv "%UV_EXE%" "%VENV_DIR%" "%REQUIREMENTS_FILE%"
+        call :ensure_venv_from_uv "!UV_EXE!" "%VENV_DIR%" "%REQUIREMENTS_FILE%"
         if errorlevel 1 (
             echo [run] uv venv setup failed, falling back to system python venv
             call :ensure_venv_from_python "%PY_EXE%" "%VENV_DIR%" "%REQUIREMENTS_FILE%"
@@ -173,6 +169,7 @@ if "!CACHE_HIT!"=="1" (
 )
 
 pushd "%PROJECT_ROOT%"
+echo [run] Running "%ENTRY_SCRIPT%" with uv python %PREFERRED_UV_PYTHON% %*
 "%UV_EXE%" run --python %PREFERRED_UV_PYTHON% --with-requirements "%REQUIREMENTS_FILE%" "%ENTRY_SCRIPT%" %*
 set "RUN_EXIT=%ERRORLEVEL%"
 popd
@@ -248,7 +245,7 @@ set "%~3=0"
 set "RUN_REQ_PY=%~1"
 set "RUN_REQ_FILE=%~2"
 set "REQ_CHECK_RESULT="
-for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "$py=$env:RUN_REQ_PY;$req=$env:RUN_REQ_FILE; if(-not $py -or -not $req){ '0'; exit }; $ok=$true; foreach($raw in Get-Content -LiteralPath $req){ $line=$raw.Trim(); if(-not $line -or $line.StartsWith('#')){ continue }; if($line -match '^([^=\s]+)\s*==\s*([^\s]+)$'){ $name=$matches[1]; $want=$matches[2]; $got=& $py -c 'import importlib.metadata as m,sys;print(m.version(sys.argv[1]))' $name 2^> $null; if($LASTEXITCODE -ne 0){ $ok=$false; break }; if((($got -join '')).Trim() -ne $want){ $ok=$false; break } } elseif($line -match '^([^=\s]+)$'){ $name=$matches[1]; & $py -c 'import importlib.metadata as m,sys;print(m.version(sys.argv[1]))' $name 2^> $null 1^> $null; if($LASTEXITCODE -ne 0){ $ok=$false; break } } else { $ok=$false; break } }; if($ok){ '1' } else { '0' }"`) do (
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "$py=$env:RUN_REQ_PY;$req=$env:RUN_REQ_FILE; if(-not $py -or -not $req){ '0'; exit }; $ok=$true; foreach($raw in Get-Content -LiteralPath $req){ $line=$raw.Trim(); if(-not $line -or $line.StartsWith('#')){ continue }; if($line -match '^([^=\s]+)\s*==\s*([^\s]+)$'){ $name=$matches[1]; $want=$matches[2]; $got=& $py -c 'import importlib.metadata as m,sys;print(m.version(sys.argv[1]))' $name 2^> $null; if($LASTEXITCODE -ne 0){ $ok=$false; break }; if((($got -join '')).Trim() -ne $want){ $ok=$false; break } } elseif($line -match '^([^=\s]+)$'){ $name=$matches[1]; & $py -c 'import importlib.metadata as m,sys;print(m.version(sys.argv[1]))' $name 2^> $null 1^> $null; if($LASTEXITCODE -ne 0){ $ok=$false; break } } else { $ok=$false; break } }; if($ok){ '1' } else { '0' }" 2^>nul`) do (
     set "REQ_CHECK_RESULT=%%R"
 )
 if "%REQ_CHECK_RESULT%"=="1" set "%~3=1"
@@ -260,8 +257,20 @@ call :is_uv_managed_python "%~1" UV_MANAGED
 if "%UV_MANAGED%"=="1" (
     call :ensure_uv UV_EXE
     if errorlevel 1 exit /b 1
-    "%UV_EXE%" pip install --python "%~1" -r "%~2"
-    exit /b %ERRORLEVEL%
+    if not defined UV_EXE (
+        echo [run] uv is required for this virtual environment but was not found.
+        exit /b 1
+    )
+    pushd "%PROJECT_ROOT%"
+    "!UV_EXE!" pip install -r "%~2"
+    set "UV_PIP_EXIT=!ERRORLEVEL!"
+    popd
+    if not "!UV_PIP_EXIT!"=="0" (
+        echo [run] uv pip install -r failed, retrying with explicit python target
+        "!UV_EXE!" pip install --python "%~1" -r "%~2"
+        exit /b !ERRORLEVEL!
+    )
+    exit /b 0
 )
 
 call :ensure_pip "%~1"
@@ -369,6 +378,7 @@ exit /b 0
 :run_python
 set "RUN_PY=%~1"
 pushd "%PROJECT_ROOT%"
+echo [run] Running "%ENTRY_SCRIPT%" with "%RUN_PY%" %RUN_USER_ARGS%
 "%RUN_PY%" "%ENTRY_SCRIPT%" %RUN_USER_ARGS%
 set "RUN_EXIT=%ERRORLEVEL%"
 popd
