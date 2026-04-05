@@ -1,6 +1,27 @@
 import os
 import UnityPy
-from UnityPy.classes import TextAsset, Texture2D
+from UnityPy.classes import (
+    AudioClip,
+    Font,
+    GameObject,
+    Mesh,
+    MonoBehaviour,
+    Shader,
+    Sprite,
+    TextAsset,
+    Texture2D,
+)
+from UnityPy.tools.extractor import (
+    exportTexture2D,
+    exportTextAsset,
+    exportMesh,
+    exportFont,
+    exportGameObject,
+    exportAudioClip,
+    exportSprite,
+    exportShader,
+    exportMonoBehaviour
+)
 import concurrent.futures
 import multiprocessing
 from rich.console import Console
@@ -15,38 +36,101 @@ console = Console()
 
 DEFAULT_TYPES = [
     "Texture2D",
-    "TextAsset"
+    "TextAsset",
+    "AudioClip",
+    "GameObject",
+    "Mesh",
+    "Font",
+    "Sprite",
+    "Shader",
+    "MonoBehaviour"
 ]
 
 def process_bundle(full_path_output_types_queue):
     full_path, output_path, selected_types, event_queue = full_path_output_types_queue
     try:
         env = UnityPy.load(full_path)
+        common_container = os.path.commonpath(list(env.container.keys())) if env.container.keys() else ""
         for obj in env.objects:
             if obj.type.name not in selected_types:
                 continue
+            else:
+                obj_type = obj.type.name
 
             container: str = obj.container
-            if not container:
-                continue
-
-            parts = container.split("/")
-            filename = parts[-1]
-            if filename.count(".") >= 2:
-                filename = ".".join(filename.split(".")[:-1])
-
-            save_dir = os.path.join(output_path, *parts[:-1])
+            if container:
+                parts = container.split("/")
+                filename = parts[-1].split(".")[0]
+                
+                try:
+                    file_ext = "." + parts[-1].split(".")[1].lower()
+                except IndexError:
+                    file_ext = ""
+                
+                save_dir = os.path.join(output_path, *parts[:-1])
+            else:
+                peek_name = str(obj.peek_name())
+                filename = peek_name.split(".")[0] + "_(" + str(obj.path_id) + ")"
+                
+                try:
+                    file_ext = "." + peek_name[-1].split(".")[1].lower()
+                except IndexError:
+                    file_ext = ""
+                    
+                save_dir = os.path.join(output_path, common_container)
+            
             os.makedirs(save_dir, exist_ok=True)
             save_path = os.path.join(save_dir, filename)
 
             data = obj.read()
             if isinstance(data, TextAsset):
-                with open(save_path, "wb") as f:
-                    f.write(data.m_Script.encode("utf-8", errors="surrogateescape"))
-                    event_queue.put(("saved_item", "text", filename, save_path))
-            elif isinstance(data, Texture2D) and container.endswith(".png"):
-                data.image.save(save_path)
-                event_queue.put(("saved_item", "texture", filename, save_path))
+                try:
+                    exportTextAsset(data, save_path, file_ext)
+                except:
+                    exportTextAsset(data, save_path)
+            elif isinstance(data, Texture2D):
+                try:
+                    exportTexture2D(data, save_path, file_ext)
+                except:
+                    exportTexture2D(data, save_path)
+            elif isinstance(data, Mesh):
+                try:
+                    exportMesh(data, save_path, file_ext)
+                except:
+                    exportMesh(data, save_path)
+            elif isinstance(data, Font):
+                try:
+                    exportFont(data, save_path, file_ext)
+                except:
+                    exportFont(data, save_path)
+            elif isinstance(data, GameObject):
+                try:
+                    exportGameObject(data, save_path, file_ext)
+                except:
+                    exportGameObject(data, save_path)
+            elif isinstance(data, AudioClip):
+                try:
+                    exportAudioClip(data, save_path, file_ext)
+                except:
+                    exportAudioClip(data, save_path)
+            elif isinstance(data, Sprite):
+                try:
+                    exportSprite(data, save_path, file_ext)
+                except:
+                    exportSprite(data, save_path)
+            elif isinstance(data, Shader):
+                try:
+                    exportShader(data, save_path, file_ext)
+                except:
+                    exportShader(data, save_path)
+            elif isinstance(data, MonoBehaviour):
+                try:
+                    exportMonoBehaviour(data, save_path, file_ext)
+                except:
+                    exportMonoBehaviour(data, save_path)
+
+            event_queue.put(("saved_item", obj_type, filename, save_path + file_ext))
+            
     except Exception as e:
         event_queue.put(("error", full_path, str(e)))
 
@@ -72,7 +156,7 @@ def print_consumer(event_queue: multiprocessing.Queue, total_bundles: int, stop_
                 relative_save_path = os.path.relpath(save_path, output_path)
                 console.print(f"[dim]Saved [{color}]{filename}[reset] [dim]to [reset]{relative_save_path}")
             elif event_type == "error":
-                _, path, error_msg = event[1], event[2]
+                _, path, error_msg = event[0], event[1], event[2]
                 console.print(f"❌ Error in {os.path.basename(path)}: {error_msg}", style="bold red")
             elif event_type == "bundle_completed":
                 progress.update(main_task_id, advance=1)
@@ -86,7 +170,7 @@ def extract_assets_from_bundles(source_path: str, output_path: str, selected_typ
     bundle_files = [
         os.path.join(root, f)
         for root, _, files in os.walk(source_path)
-        for f in files if f.endswith(".bundle")
+        for f in files if f.endswith(".unity3d") or f.endswith(".bundle")
     ]
 
     total_cpu_count = multiprocessing.cpu_count()
@@ -145,7 +229,7 @@ def create_gui():
 
     tk.Label(root, text="CPU Usage (%):").grid(row=2, column=0, padx=5, pady=5, sticky="w")
     cpu_percent_var = tk.IntVar(value=100)
-    cpu_options = [25, 50, 75, 100]
+    cpu_options = ["25", "50", "75", "100"]
     cpu_menu = ttk.Combobox(root, textvariable=cpu_percent_var, values=cpu_options, state="readonly")
     cpu_menu.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
     cpu_menu.set(100)
@@ -153,7 +237,7 @@ def create_gui():
     tk.Label(root, text="Extract Types:").grid(row=3, column=0, padx=5, pady=5, sticky="nw")
     type_vars = {}
     for i, type_name in enumerate(DEFAULT_TYPES):
-        var = tk.BooleanVar(value=True)
+        var = tk.BooleanVar(value=False)
         cb = tk.Checkbutton(root, text=type_name, variable=var)
         cb.grid(row=3 + i, column=1, sticky="w", padx=5, pady=2)
         type_vars[type_name] = var
@@ -166,6 +250,10 @@ def create_gui():
 
         if not source_path or not output_path:
             messagebox.showerror("Error", "Please select both source and output folders.")
+            return
+        
+        if not selected_types:
+            messagebox.showerror("Error", "Please select at least one type to extract.")
             return
 
         root.destroy() # Close the GUI window before starting extraction
@@ -190,7 +278,7 @@ def create_gui():
 
 def main():
     parser = argparse.ArgumentParser(description="Unity Asset Extractor")
-    parser.add_argument("-s", "--source", help="Path to source directory containing .bundle files")
+    parser.add_argument("-s", "--source", help="Path to source directory containing .unity3d files")
     parser.add_argument("-o", "--output", help="Path to output directory for extracted assets")
     parser.add_argument("-c", "--cpu", type=int, choices=[25, 50, 75, 100], default=100,
                         help="Percentage of CPU to use (25, 50, 75, 100)")

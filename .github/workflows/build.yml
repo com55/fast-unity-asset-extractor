@@ -1,0 +1,109 @@
+name: Fast Unity Assest Extractor Build
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka
+
+      - name: Verify Dependency Integrity
+        run: |
+          python -m pip check
+
+      - name: Build onefile executable with Nuitka
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          nuitka-version: main
+          script-name: assest_extracter.py
+          mode: onefile
+          output-dir: dist
+          output-file: FastUnityAssestExtractor.exe
+          include-package: |
+            UnityPy.resources
+            pyfmodex
+          include-package-data: |
+            UnityPy
+            archspec
+            lz4
+            texture2ddecoder
+            etcpak
+            astc_encoder
+            pyfmodex
+
+      - name: Rename executable for release
+        shell: pwsh
+        run: |
+          Move-Item dist/FastUnityAssestExtractor.exe dist/FastUnityAssestExtractor-${{ github.ref_name }}.exe -Force
+
+      - name: Sign Executable
+        if: env.CERT_DATA != '' && env.CERT_PASS != ''
+        shell: pwsh
+        env:
+          CERT_DATA: ${{ secrets.CERT_BASE64 }}
+          CERT_PASS: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          $exePath = "dist/FastUnityAssestExtractor-${{ github.ref_name }}.exe"
+
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\" -Filter signtool.exe -Recurse |
+                      Where-Object { $_.FullName -match "x64" } |
+                      Sort-Object -Property LastWriteTime -Descending |
+                      Select-Object -First 1 -ExpandProperty FullName
+
+          try {
+              $cleanBase64 = $env:CERT_DATA -replace '\s',''
+              $certBytes = [System.Convert]::FromBase64String($cleanBase64)
+              [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+
+              certutil -p $env:CERT_PASS -dump $certPath | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Incorrect password or corrupted PFX file."
+              }
+
+              & $signtool sign /f $certPath /p "$env:CERT_PASS" /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v $exePath
+              if ($LASTEXITCODE -ne 0) {
+                  throw "SignTool failed with code: $LASTEXITCODE"
+              }
+          }
+          finally {
+              if (Test-Path $certPath) {
+                  Remove-Item $certPath -Force
+              }
+          }
+
+      - name: Upload Release Asset (.exe)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/FastUnityAssestExtractor-${{ github.ref_name }}.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
