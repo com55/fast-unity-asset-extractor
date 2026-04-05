@@ -18,7 +18,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           architecture: "x64"
 
       - name: Setup uv
@@ -30,7 +30,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install nuitka
 
       - name: Verify Dependency Integrity
         run: |
@@ -42,6 +41,10 @@ jobs:
           nuitka-version: main
           script-name: assest_extracter.py
           mode: onefile
+          enable-plugins: tk-inter
+          jobs: 1
+          lto: no
+          low-memory: true
           output-dir: dist
           output-file: FastUnityAssestExtractor.exe
           include-package: |
